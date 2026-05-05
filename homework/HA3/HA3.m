@@ -1,0 +1,659 @@
+%%
+close all
+clear all
+clc
+
+addpath('./functions');
+rng(1)
+
+
+
+
+%% QUESTION 1
+% Approximations of mean and covariance
+
+
+%% Task 1a & 1d: Approximations of mean and covariance (Monte Carlo)
+close all
+clc
+addpath('./HA3');
+%  Ns = 10000 
+N = 10000; 
+s1 = [-25; 0];
+s2 = [25; 0];
+sigma_phi = 0.1 * pi / 180;
+R = diag([sigma_phi^2, sigma_phi^2]);
+x1_hat = [30; 30];
+P1 = diag([(8/3)^2, (4/3)^2]);
+x2_hat = [30; 5];
+P2 = diag([(8/3)^2, (1/3)^2]);
+
+% 1d 
+P2_reduced = 0.1 * P2;
+
+means = {x1_hat, x2_hat, x2_hat};
+covs = {P1, P2, P2_reduced};
+titles = {'p_1(x)', 'p_2(x)', 'p_2(x) with 0.1*P_2'};
+
+figure('Name', 'Task 1: Monte Carlo Approximations')
+
+for i = 1:3
+   
+    x_prior = means{i};
+    P_prior = covs{i};
+    
+    %  x ~ N(x_prior, P_prior)
+    % 2 y = h(x) + r
+    h_func = @(x) dualBearingMeasurement(x, s1, s2);
+    
+    [y_mean_mc, P_yy_mc, y_s] = approxGaussianTransform(x_prior, P_prior, h_func, R, N);
+    
+    
+    subplot(1, 3, i)
+    hold on; grid on;
+    
+   
+    scatter(y_s(1,:), y_s(2,:), 1, 'MarkerEdgeColor', [0.7 0.7 0.7]);
+    
+   
+    plot(y_mean_mc(1), y_mean_mc(2), 'r+', 'MarkerSize', 10, 'LineWidth', 2);
+    
+    %  3-sigma
+    xy_ellipse = sigmaEllipse2D(y_mean_mc, P_yy_mc, 3, 100);
+    plot(xy_ellipse(1,:), xy_ellipse(2,:), 'r', 'LineWidth', 2);
+    
+    xlabel('\phi_1 (rad)'); ylabel('\phi_2 (rad)');
+    title(titles{i});
+    legend('Samples', 'Sample Mean', '3\sigma-contour');
+    
+    
+    fprintf('Distribution %d Mean:\n', i); disp(y_mean_mc);
+end
+
+
+
+
+
+
+%% 1b
+close all
+clc
+
+s1 = [-25; 0]; % 传感器 1 位置
+s2 = [25; 0];  % 传感器 2 位置
+sigma_phi = 0.1 * pi / 180; % 测量标准差
+R = diag([sigma_phi^2, sigma_phi^2]); % 测量噪声协方差
+
+% 定义状态密度 p1 和 p2
+x1_hat = [30; 30];
+P1 = diag([(8/3)^2, (4/3)^2]);
+x2_hat = [30; 5];
+P2 = diag([(8/3)^2, (1/3)^2]);
+
+means_prior = {x1_hat, x2_hat};
+covs_prior = {P1, P2};
+p_names = {'p_1(x)', 'p_2(x)'};
+filter_types = {'EKF', 'UKF'}; 
+
+results = struct();
+
+for i = 1:2 % 遍历两种分布
+    x_p = means_prior{i};
+    P_p = covs_prior{i};
+    h_func = @(x) dualBearingMeasurement(x, s1, s2);
+    
+    fprintf('--- Analysis for %s ---\n', p_names{i});
+    
+    for f = 1:2 % 遍历两种滤波器类型
+        type = filter_types{f};
+        
+        if strcmp(type, 'EKF')
+            % --- EKF 近似逻辑 ---
+            % 1. 在均值处评估测量函数和雅可比矩阵
+            [hx, H] = h_func(x_p);
+            % 2. 近似均值和协方差
+            y_mean = hx;
+            y_cov = H * P_p * H' + R;
+            
+        else
+            % --- UKF/CKF 近似逻辑 (以 UKF 为例) ---
+            % 1. 生成 Sigma Points
+            [SP, W] = sigmaPoints(x_p, P_p, type);
+            num_sp = size(SP, 2);
+            Y_sp = zeros(2, num_sp);
+            
+            % 2. 传播点并计算加权均值
+            y_mean = zeros(2, 1);
+            for k = 1:num_sp
+                Y_sp(:, k) = h_func(SP(:, k));
+                y_mean = y_mean + W(k) * Y_sp(:, k);
+            end
+            
+            % 3. 计算加权协方差并加上测量噪声 R
+            y_cov = R;
+            for k = 1:num_sp
+                diff = Y_sp(:, k) - y_mean;
+                y_cov = y_cov + W(k) * (diff * diff');
+            end
+        end
+        
+        % 保存结果
+        results.(['dist', num2str(i)]).(type).mean = y_mean;
+        results.(['dist', num2str(i)]).(type).cov = y_cov;
+        
+        fprintf('%s Mean: [%.4f, %.4f]\n', type, y_mean(1), y_mean(2));
+    end
+    fprintf('\n');
+end
+%% 1c
+close all
+clc
+
+% 基本参数设置
+N = 10000;
+s1 = [-25; 0];
+s2 = [25; 0];
+sigma_phi = 0.1 * pi / 180;
+R = diag([sigma_phi^2, sigma_phi^2]);
+
+% 定义状态分布
+x1 = [30; 30];
+P1 = diag([(8/3)^2, (4/3)^2]);
+x2 = [30; 5];
+P2 = diag([(8/3)^2, (1/3)^2]);
+
+densities = {x1, x2};
+p_names = {'p_1(x)', 'p_2(x)'};
+P_mats = {P1, P2};
+
+for j = 1:2
+    x_prior = densities{j};
+    P_prior = P_mats{j};
+    h_func = @(x) dualBearingMeasurement(x, s1, s2);
+
+    % --- 1. 蒙特卡罗基准 (Task 1a) ---
+    [y_mean_mc, P_yy_mc, y_s] = approxGaussianTransform(x_prior, P_prior, h_func, R, N);
+
+    % --- 2. EKF 近似 (Task 1b) ---
+    % EKF 均值直接通过测量函数计算，协方差通过雅可比矩阵线性传播
+    [y_mean_ekf, H] = h_func(x_prior); 
+    P_yy_ekf = H * P_prior * H' + R;
+
+    % --- 3. UKF 近似与 Sigma 点提取 (Task 1c 核心) ---
+    % 生成 Sigma 点及其权重[cite: 1, 2]
+    [SP, W] = sigmaPoints(x_prior, P_prior, 'UKF');
+    num_sp = size(SP, 2);
+    Y_sp_no_noise = zeros(2, num_sp);
+    
+    % 初始化 UKF 矩[cite: 1, 2]
+    y_mean_ukf = zeros(2, 1);
+    
+    % 第一遍循环：传播 Sigma 点并计算近似均值[cite: 1, 2]
+    for i = 1:num_sp
+        Y_sp_no_noise(:, i) = h_func(SP(:, i)); 
+        y_mean_ukf = y_mean_ukf + W(i) * Y_sp_no_noise(:, i);
+    end
+    
+    % 第二遍循环：计算近似协方差[cite: 1, 2]
+    P_yy_ukf = R; 
+    for i = 1:num_sp
+        diff = Y_sp_no_noise(:, i) - y_mean_ukf;
+        P_yy_ukf = P_yy_ukf + W(i) * (diff * diff');
+    end
+
+    % --- 绘图部分 ---
+    figure('Name', ['Task 1c: Analysis for ', p_names{j}])
+    hold on; grid on;
+
+    % 绘制 MC 样本点
+    scatter(y_s(1,:), y_s(2,:), 1, [0.8 0.8 0.8], 'DisplayName', 'MC Samples');
+
+    % 绘制 3-sigma 椭圆[cite: 1, 2]
+    ell_mc = sigmaEllipse2D(y_mean_mc, P_yy_mc, 3, 100);
+    ell_ekf = sigmaEllipse2D(y_mean_ekf, P_yy_ekf, 3, 100);
+    ell_ukf = sigmaEllipse2D(y_mean_ukf, P_yy_ukf, 3, 100);
+
+    plot(ell_mc(1,:), ell_mc(2,:), 'k--', 'LineWidth', 1.5, 'DisplayName', 'MC 3\sigma');
+    plot(ell_ekf(1,:), ell_ekf(2,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'EKF 3\sigma');
+    plot(ell_ukf(1,:), ell_ukf(2,:), 'b', 'LineWidth', 1.5, 'DisplayName', 'UKF 3\sigma');
+
+    % 绘制均值点
+    plot(y_mean_mc(1), y_mean_mc(2), 'kx', 'MarkerSize', 10, 'DisplayName', 'MC Mean');
+    plot(y_mean_ekf(1), y_mean_ekf(2), 'ro', 'DisplayName', 'EKF Mean');
+    plot(y_mean_ukf(1), y_mean_ukf(2), 'bs', 'DisplayName', 'UKF Mean');
+
+    % 绘制传播后的 Sigma Points (不带噪声)[cite: 1, 2]
+    plot(Y_sp_no_noise(1,:), Y_sp_no_noise(2,:), 'mo', 'MarkerFaceColor', 'm', ...
+        'MarkerSize', 6, 'DisplayName', 'Sigma Points (no noise)');
+
+    xlabel('\phi_1 (rad)'); ylabel('\phi_2 (rad)');
+    title(['Comparison of Approximations for ', p_names{j}]);
+    legend('Location', 'best');
+end
+
+
+
+
+%% 2a
+close all; clear; clc;
+rng(1)
+
+
+x0 = [0; 200; 2; 0; 0];
+P0 = diag([(5/3)^2, (5/3)^2, 2^2, (0.1*pi/180)^2, (0.1*pi/180)^2]);
+
+s1 = [-50; 0];
+s2 = [50; 0];
+
+T = 1;
+N = 100;
+
+sigma_v   = 0.3;
+sigma_w   = 0.3*pi/180;
+sigma_phi = 0.1*pi/180;
+
+
+Q = diag([0, 0, sigma_v^2, 0, sigma_w^2]); 
+R = sigma_phi^2 * eye(2);    
+
+
+f = @(x) coordinatedTurnMotion(x,T);
+h = @(x) dualBearingMeasurement(x,s1,s2);
+
+
+X = genNonLinearStateSequence(x0,P0,f,Q,N);
+Y = genNonLinearMeasurementSequence(X,h,R);
+
+[xpos, ypos] = getPosFromMeasurement(Y(1,:), Y(2,:), s1, s2);
+
+
+[xf_EKF, Pf_EKF] = nonLinearKalmanFilter(Y,x0,P0,f,Q,h,R,'EKF');
+[xf_UKF, Pf_UKF] = nonLinearKalmanFilter(Y,x0,P0,f,Q,h,R,'UKF');
+
+
+figure; hold on; grid on;
+
+% True
+plot(X(1,:),X(2,:),'k','LineWidth',2)
+
+% Measurement（注意不要从0开始连！）
+plot(xpos, ypos, ':', 'Color',[0 0.7 0.7],'LineWidth',1.5)
+
+% Filter
+plot(xf_EKF(1,:), xf_EKF(2,:), 'r','LineWidth',1.5)
+plot(xf_UKF(1,:), xf_UKF(2,:), 'b','LineWidth',1.5)
+
+% Sensors
+scatter(s1(1),s1(2),60,'k','filled','s')
+scatter(s2(1),s2(2),60,'k','filled','s')
+
+
+for k = 5:5:N
+    e = sigmaEllipse2D(xf_EKF(1:2,k), Pf_EKF(1:2,1:2,k), 3, 100);
+    plot(e(1,:), e(2,:), 'r')
+    
+    e = sigmaEllipse2D(xf_UKF(1:2,k), Pf_UKF(1:2,1:2,k), 3, 100);
+    plot(e(1,:), e(2,:), 'b')
+end
+
+axis equal
+legend('True','Measurement','EKF','UKF','Cam1','Cam2')
+title('Case 1 Nonlinear Kalman Filtering ')
+xlabel('x'); ylabel('y');
+
+%% 2b
+close all; clear; clc;
+rng(1)
+
+
+x0 = [200; 50; 2; 0; 0];
+P0 = diag([(5/3)^2, (5/3)^2, 2^2, (0.1*pi/180)^2, (0.1*pi/180)^2]);
+
+s1 = [-50; 0];
+s2 = [50; 0];
+
+T = 1;
+N = 100;
+
+sigma_v   = 0.3;
+sigma_w   = 0.3*pi/180;
+sigma_phi = 0.1*pi/180;
+
+
+Q = diag([0, 0, sigma_v^2, 0, sigma_w^2]); 
+R = sigma_phi^2 * eye(2);    
+
+
+f = @(x) coordinatedTurnMotion(x, T);
+h = @(x) dualBearingMeasurement(x, s1, s2);
+
+X = genNonLinearStateSequence(x0, P0, f, Q, N);
+Y = genNonLinearMeasurementSequence(X, h, R);
+
+[xpos, ypos] = getPosFromMeasurement(Y(1,:), Y(2,:), s1, s2);
+
+[xf_EKF, Pf_EKF] = nonLinearKalmanFilter(Y, x0, P0, f, Q, h, R, 'EKF');
+[xf_UKF, Pf_UKF] = nonLinearKalmanFilter(Y, x0, P0, f, Q, h, R, 'UKF');
+
+figure; hold on; grid on;
+plot(X(1,:),    X(2,:),    'k',  'LineWidth', 2)
+plot(xpos,      ypos,      ':', 'Color', [0 0.7 0.7], 'LineWidth', 1.5)
+plot(xf_EKF(1,:), xf_EKF(2,:), 'r', 'LineWidth', 1.5)
+plot(xf_UKF(1,:), xf_UKF(2,:), 'b', 'LineWidth', 1.5)
+scatter(s1(1), s1(2), 60, 'k', 'filled', 's')
+scatter(s2(1), s2(2), 60, 'k', 'filled', 's')
+
+for k = 5:5:N
+    e = sigmaEllipse2D(xf_EKF(1:2,k), Pf_EKF(1:2,1:2,k), 3, 100);
+    plot(e(1,:), e(2,:), 'r')
+
+    e = sigmaEllipse2D(xf_UKF(1:2,k), Pf_UKF(1:2,1:2,k), 3, 100);
+    plot(e(1,:), e(2,:), 'b')
+end
+
+axis equal
+legend('True','Measurement','EKF','UKF','Cam1','Cam2')
+title('Case 2 Nonlinear Kalman Filtering')
+xlabel('x'); ylabel('y');
+
+
+%%  2c
+close all; clear; clc;
+
+
+P0 = diag([(5/3)^2, (5/3)^2, 2^2, (0.1*pi/180)^2, (0.1*pi/180)^2]);
+s1 = [-50; 0];
+s2 = [50; 0];
+T  = 1;
+N  = 100;
+MC = 100;
+
+sigma_v   = 0.3;
+sigma_w   = 0.3*pi/180;
+sigma_phi = 0.1*pi/180;
+
+Q = diag([0, 0, sigma_v^2, 0, sigma_w^2]);
+R = sigma_phi^2 * eye(2);
+
+f = @(x) coordinatedTurnMotion(x, T);
+
+x0_list    = {[0; 200; 2; 0; 0], ...    % Case 1
+              [200; 50; 2; 0; 0]};      % Case 2
+case_names = {'Case 1', 'Case 2'};
+
+
+%  Monte Carlo 
+
+for c = 1:2
+    x0 = x0_list{c};
+    h  = @(x) dualBearingMeasurement(x, s1, s2);
+
+    err_EKF = zeros(2, MC*N);
+    err_UKF = zeros(2, MC*N);
+
+    rng(c);   
+    for imc = 1:MC
+    
+        X = genNonLinearStateSequence(x0, P0, f, Q, N);
+        Y = genNonLinearMeasurementSequence(X, h, R);
+        [xf_EKF, ~] = nonLinearKalmanFilter(Y, x0, P0, f, Q, h, R, 'EKF');
+        [xf_UKF, ~] = nonLinearKalmanFilter(Y, x0, P0, f, Q, h, R, 'UKF');
+        idx = (imc-1)*N + (1:N);
+        err_EKF(:, idx) = xf_EKF(1:2, :) - X(1:2, 2:end);
+        err_UKF(:, idx) = xf_UKF(1:2, :) - X(1:2, 2:end);
+    end
+
+   
+    dim_labels  = {'x position error [m]', 'y position error [m]'};
+    filt_labels = {'EKF', 'UKF'};
+    filt_errors = {err_EKF, err_UKF};
+    filt_colors = {[0.85 0.2 0.2], [0.2 0.2 0.85]};
+
+    figure('Name', sprintf('MC Histograms - %s', case_names{c}), ...
+           'Position', [100+c*30, 100, 1000, 560]);
+    sgtitle(sprintf('2c Monte Carlo Error Histograms — %s  (MC=%d, N=%d)', ...
+                    case_names{c}, MC, N), 'FontSize', 12);
+
+    for fi = 1:2          % EKF / UKF
+        for di = 1:2      % x / y
+            subplot(2, 2, (fi-1)*2 + di);
+
+            e = filt_errors{fi}(di, :);
+            e = e(isfinite(e));                
+
+      
+            histogram(e, 60, ...
+                      'Normalization', 'pdf', ...
+                      'FaceColor',     filt_colors{fi}, ...
+                      'EdgeColor',     'none', ...
+                      'FaceAlpha',     0.7);
+            hold on; grid on;
+
+            mu_e  = mean(e);
+            std_e = std(e);
+            xg    = linspace(mu_e - 4*std_e, mu_e + 4*std_e, 400);
+            plot(xg, normpdf(xg, mu_e, std_e), 'k-', 'LineWidth', 2);
+
+            xlabel(dim_labels{di}, 'FontSize', 10);
+            ylabel('pdf',          'FontSize', 10);
+            title(sprintf('%s — %s\n\\mu=%.2f  \\sigma=%.2f', ...
+                          filt_labels{fi}, dim_labels{di}, mu_e, std_e), ...
+                  'FontSize', 10);
+            legend('Error histogram', ...
+                   sprintf('N(%.2f, %.2f^2)', mu_e, std_e), ...
+                   'Location', 'best', 'FontSize', 8);
+        end
+    end
+end
+
+%% QUESTION 3
+% Task a) b)
+close all
+clear all
+clc
+rng(6)
+
+
+
+% True track
+% Sampling period
+T = 0.1;
+% Length of time sequence
+K = 800;
+% Allocate memory
+omega = zeros(1,K+1);
+% Set turn−rate at turns
+omega(200:350) = pi/301/T;
+omega(450:600) = pi/301/T;
+% Initial state
+X = zeros(5, K+1);
+X(:,1) = [0; 0; 20; -pi/2; 0]; 
+% Allocate memory
+
+% Create true track
+for i=2:K+1
+    % Simulate
+    X(:,i) = coordinatedTurnMotion(X(:,i-1), T);
+    % Set turn−rate
+    X(5,i) = omega(i);
+end
+
+
+% Set the intial prior
+x0 = [0; 0; 0; -pi/2; 0];
+P0 = diag([10^2, 10^2, 10^2, ((5*pi)/180)^2, ((1*pi)/180)^2]);
+
+% Sensor position
+s1 = [160; -300];
+s2 = [420; -300];
+
+% Measurement noise
+sigma_phi_1 = 0.5*pi/180;
+sigma_phi_2 = 0.5*pi/180;
+R = diag([sigma_phi_1, sigma_phi_2]).^2;
+
+% Generate measurements
+h = @(x) dualBearingMeasurement(x,s1,s2);
+Y = genNonLinearMeasurementSequence(X, h, R);
+[xpos, ypos] = getPosFromMeasurement(Y(1,:), Y(2,:), s1, s2);
+
+f = @(x) coordinatedTurnMotion(x, T);
+
+
+% Filter the position with non-linear Kalman filter
+type = 'EKF';
+
+% Tune process noise covariance
+sigma_v = 1;
+sigma_w = pi/180;
+
+
+%Q = diag([0 0 (sigma_v)^2 0 (sigma_w)^2]).*T;% well tunes
+Q = diag([0 0 (0.01*sigma_v)^2 0 (0.01*sigma_w)^2]).*T; % too small
+% Q = diag([0 0 (10*sigma_v)^2 0 (10*sigma_w)^2]).*T; %too large
+
+
+[xf,Pf,xp,Pp] = nonLinearKalmanFilter(Y,x0,P0,f,Q,h,R,type);
+
+transfErrors = zeros(1, K);
+for k = 1:K
+    error = xf(1:2, k) - X(1:2, k+1);
+    transfErrors(k) = error.' * inv(Pf(1:2,1:2,k)) * error;
+end
+rhos = sqrt(cumsum(transfErrors) .* (1./(1:K))) / sqrt(2);
+
+
+
+% Plot to see the turn
+figure(); hold on; grid on; axis equal;
+plot(X(1,:),  X(2,:),  'k',  'LineWidth', 2)
+plot(xpos,    ypos,    ':', 'Color',[0 0.7 0.7], 'LineWidth', 1.5)
+plot(xf(1,:), xf(2,:), 'r',  'LineWidth', 1.5)
+scatter(s1(1), s1(2), 80, 'k', 'filled', 's')
+scatter(s2(1), s2(2), 80, 'k', 'filled', 's')
+
+for i = 5:5:K
+    xy = sigmaEllipse2D(xf(1:2,i), Pf(1:2,1:2,i), 3, 100);
+    plot(xy(1,:), xy(2,:), 'r', 'LineWidth', 0.5)   
+end
+
+legend('True','Measurement','EKF','Sensor 1','Sensor 2','3\sigma')
+title(sprintf('Coordinated Turn — %s (Q tuning: too small)', type))
+xlabel('x [m]'); ylabel('y [m]')
+
+% rho(L) 图
+figure(); hold on; grid on;
+plot(1:K, rhos, 'r', 'LineWidth', 1.5)
+yline(1, 'k--', 'LineWidth', 1.5)   % well-tuned 时应趋近于 1
+xlabel('L'); ylabel('\rho(L)')
+title('Normalized estimation error \rho(L)')
+legend('\rho(L)', 'Target value = 1')
+
+
+Q_settings = {
+    diag([0, 0, sigma_v^2,        0, sigma_w^2       ]) * T, ...  % well-tuned
+    diag([0, 0, (0.01*sigma_v)^2, 0, (0.01*sigma_w)^2]) * T, ...  % too small
+    diag([0, 0, (10*sigma_v)^2,   0, (10*sigma_w)^2  ]) * T  ...  % too large
+};
+Q_labels = {'Well-tuned', 'Too small (×0.01)', 'Too large (×10)'};
+colors   = {'r', 'b', 'g'};
+figure(); hold on; grid on;
+title('Task 3b — \rho(L) for different Q settings', 'FontSize', 12)
+
+for n = 1:3
+    Q = Q_settings{n};
+    [xf, Pf, ~, ~] = nonLinearKalmanFilter(Y, x0, P0, f, Q, h, R, type);
+
+    transfErrors = zeros(1, K);
+    for k = 1:K
+        err = xf(1:2,k) - X(1:2,k+1);
+        transfErrors(k) = err.' * inv(Pf(1:2,1:2,k)) * err;
+    end
+    rhos = sqrt(cumsum(transfErrors) .* (1./(1:K))) / sqrt(2);
+
+    plot(1:K, rhos, colors{n}, 'LineWidth', 1.8, 'DisplayName', Q_labels{n})
+end
+
+yline(1, 'k--', 'LineWidth', 2, 'DisplayName', 'Target \rho = 1')
+xlabel('L'); ylabel('\rho(L)')
+legend('Location', 'best')
+ylim([0 5])
+
+%
+Q_well = diag([0, 0, sigma_v^2, 0, sigma_w^2]) * T;
+[xf, Pf, ~, ~] = nonLinearKalmanFilter(Y, x0, P0, f, Q_well, h, R, type);
+state_idx    = [3,       4,        5      ];
+state_labels = {'Speed [m/s]', 'Heading [rad]', 'Turn rate [rad/s]'};
+turn1 = [200, 350];
+turn2 = [450, 600];
+ypad  = 1e3;   % 足够大覆盖整个y轴
+colors_state = {'r', 'b', 'g'};
+figure('Position', [100 100 1000 800]);
+sgtitle('Task 3c — Velocity / Heading / Turn-rate estimates (Well-tuned Q)', 'FontSize',12);
+for s = 1:3
+    subplot(3,1,s); hold on; grid on;
+
+    % true value
+    plot(1:K, X(state_idx(s), 2:end), 'k', 'LineWidth', 2)
+
+    % estimation value
+    plot(1:K, xf(state_idx(s), :), colors_state{s}, 'LineWidth', 1.5)
+
+    % 3sigma 
+    sig = squeeze(sqrt(Pf(state_idx(s), state_idx(s), :)))';
+    fill([1:K, K:-1:1], ...
+         [xf(state_idx(s),:)+3*sig, fliplr(xf(state_idx(s),:)-3*sig)], ...
+         colors_state{s}, 'FaceAlpha', 0.15, 'EdgeColor', 'none')
+
+   
+
+    ylabel(state_labels{s})
+    xlabel('time k')
+    legend('True', 'EKF estimate', '3\sigma bound', 'Turn region', ...
+           'Location','best')
+    title(state_labels{s})
+end
+
+figure('Position',[100 100 900 500]);
+hold on; grid on;
+title('Task 3c — Position RMSE: straight vs turning segments')
+
+segments = {1:199,    200:350,  351:449,  450:600,  601:800 };
+seg_names = {'Straight 1','Turn 1','Straight 2','Turn 2','Straight 3'};
+seg_colors = {[0.2 0.6 1],[1 0.3 0.3],[0.2 0.6 1],[1 0.3 0.3],[0.2 0.6 1]};
+
+rmse_vals = zeros(1,5);
+for s = 1:5
+    idx = segments{s};
+    err = xf(1:2, idx) - X(1:2, idx+1);
+    rmse_vals(s) = sqrt(mean(sum(err.^2, 1)));
+end
+
+b = bar(rmse_vals, 'FaceColor','flat');
+for s = 1:5
+    b.CData(s,:) = seg_colors{s};
+end
+xticks(1:5); xticklabels(seg_names);
+ylabel('Position RMSE [m]')
+legend([patch(nan,nan,[0.2 0.6 1]), patch(nan,nan,[1 0.3 0.3])], ...
+       'Straight','Turning','Location','best')
+%%
+function plotTrajectory(X, xf, Pf, xpos, ypos, s1, s2, titleStr)
+    figure; hold on; grid on;
+    plot(X(1,:), X(2,:), 'k', 'LineWidth', 2, 'DisplayName', 'True position');
+    plot(xpos, ypos, ':', 'Color', [0 0.7 0.7], 'DisplayName', 'Measured position');
+    plot(xf(1,:), xf(2,:), 'r', 'LineWidth', 1.5, 'DisplayName', 'Filtered position');
+    scatter([s1(1), s2(1)], [s1(2), s2(2)], 'ks', 'filled', 'DisplayName', 'Sensors');
+    
+    % 每 10 步绘制 3-sigma 椭圆[cite: 1]
+    for i = 10:10:size(xf, 2)
+        [xy] = sigmaEllipse2D(xf(1:2,i), Pf(1:2,1:2,i), 3, 50);
+        plot(xy(1,:), xy(2,:), 'k--', 'HandleVisibility', 'off');
+    end
+    title(titleStr); xlabel('x [m]'); ylabel('y [m]'); legend('Location', 'best');
+end
+
+
+
+
+
